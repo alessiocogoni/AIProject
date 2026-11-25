@@ -5,27 +5,43 @@
 .composer{display:flex;align-items:flex-end;gap:12px;border:1px solid #dedede;background:white;border-radius:24px;padding:16px;box-shadow:0 8px 32px #00000008}textarea{flex:1;min-width:0;min-height:58px;max-height:180px;resize:vertical;border:0;outline:none;background:transparent;color:inherit;font:inherit}button{flex:none;border:0;border-radius:50%;width:42px;height:42px;background:#222;color:white;cursor:pointer;font-size:24px}button:disabled{opacity:.45;cursor:wait}button:focus-visible,textarea:focus-visible{outline:2px solid #777;outline-offset:3px}
 #status{margin:12px 8px 0;color:#777;font-size:14px;text-align:center}#status:empty{display:none}
 @media(prefers-color-scheme:dark){body{background:#171717;color:#eee}.composer,.bot{background:#252525;border-color:#444}.user{background:#333}button{background:#eee;color:#222}#status{color:#999}}
-</style></head><body><main><h1>AlessioAI</h1><div id="chat" aria-live="polite"></div><form id="composer" class="composer"><textarea id="prompt" aria-label="Scrivi un messaggio" placeholder="Scrivi un messaggio…" maxlength="4000" required></textarea><button type="submit" aria-label="Invia messaggio">↑</button></form><div id="status" role="status"></div><p style="text-align:center;font-size:12px;color:#999;margin:16px 0 0">versione 4</p></main><script>
+</style></head><body><main><h1>AlessioAI</h1><div id="chat" aria-live="polite"></div><form id="composer" class="composer"><textarea id="prompt" aria-label="Scrivi un messaggio" placeholder="Scrivi un messaggio…" maxlength="4000" required></textarea><button type="submit" aria-label="Invia messaggio">↑</button></form><div id="status" role="status"></div><p style="text-align:center;font-size:12px;color:#999;margin:16px 0 0">versione 5</p></main><script>
 const form=document.getElementById('composer'),input=document.getElementById('prompt'),chat=document.getElementById('chat'),status=document.getElementById('status'),button=form.querySelector('button');
 const SYSTEM="Sei AlessioAI, un assistente che parla sempre e solo in italiano. Rispondi direttamente e con precisione a quello che l'utente chiede, in modo naturale come in una conversazione. Risposte brevi: 1-3 frasi. Non spiegare il significato delle parole che l'utente usa: rispondi alla sua domanda.";
 const EXAMPLES=[{role:'user',content:'Ciao, come stai?'},{role:'assistant',content:'Ciao! Sto bene, grazie. E tu come stai?'},{role:'user',content:'Qual è la capitale della Francia?'},{role:'assistant',content:'La capitale della Francia è Parigi.'},{role:'user',content:'Mi consigli cosa mangiare stasera?'},{role:'assistant',content:'Che ne dici di una bella pasta al pomodoro? È veloce e piace a tutti.'}];
 const history=[];
-let loading=null,lib=null,busy=false;
+let loading=null,lib=null,busy=false,mode=null;
 async function hasWebGPU(){try{return !!(navigator.gpu&&await navigator.gpu.requestAdapter())}catch{return false}}
+function saved(){try{return localStorage.getItem('alessioai-mode')}catch{return null}}
+function save(m){try{localStorage.setItem('alessioai-mode',m)}catch{}}
+// Testo degenerato: stesso pezzetto ripetuto, oppure una lunga "parola" senza spazi
+function broken(t){const s=t.slice(-80);return t.length>=30&&(/(.{1,10}?)\1{5,}$/s.test(s)||/\S{35,}$/.test(s))}
 function load(){
  if(loading)return loading;
  loading=(async()=>{
-  lib=await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2');
+  lib=lib||await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2');
   lib.env.allowLocalModels=false;
-  const gpu=await hasWebGPU();
-  if(!gpu)lib.env.backends.onnx.wasm.numThreads=1;
+  // Sempre sul processore (WASM, q8): più lento ma affidabile. La scheda grafica su alcuni dispositivi produce testo senza senso.
+  mode='cpu';
+  if(mode==='cpu')lib.env.backends.onnx.wasm.numThreads=1;
   status.textContent='Preparazione del modello…';
-  const gen=await lib.pipeline('text-generation','onnx-community/Qwen2.5-0.5B-Instruct',{device:gpu?'webgpu':'wasm',dtype:gpu?'q4f16':'q8',progress_callback:p=>{if(p.status==='progress'&&String(p.file).endsWith('.onnx')&&Number.isFinite(p.progress))status.textContent='Download del modello (solo la prima volta)… '+Math.round(p.progress)+'%';}});
+  // Su scheda grafica usiamo q4 (calcoli a 32 bit): q4f16 su alcune GPU va in overflow e produce testo senza senso
+  const gen=await lib.pipeline('text-generation','onnx-community/Qwen2.5-0.5B-Instruct',{device:mode==='gpu'?'webgpu':'wasm',dtype:mode==='gpu'?'q4':'q8',progress_callback:p=>{if(p.status==='progress'&&String(p.file).endsWith('.onnx')&&Number.isFinite(p.progress))status.textContent='Download del modello (solo la prima volta)… '+Math.round(p.progress)+'%';}});
   status.textContent='';
   return gen;
  })();
  loading.catch(()=>{loading=null});
  return loading;
+}
+async function switchToCpu(){const old=await loading.catch(()=>null);try{await old?.dispose?.()}catch{}mode='cpu';save('cpu');loading=null;return load()}
+async function reply(generator,messages,out){
+ let text='',bad=false;
+ const stop=new lib.InterruptableStoppingCriteria();
+ const streamer=new lib.TextStreamer(generator.tokenizer,{skip_prompt:true,skip_special_tokens:true,callback_function:t=>{text+=t;if(broken(text)){bad=true;stop.interrupt();return}out.textContent=text;out.scrollIntoView({block:'end'});}});
+ const output=await generator(messages,{max_new_tokens:160,do_sample:false,repetition_penalty:1.15,streamer,stopping_criteria:[stop]});
+ if(bad)return null;
+ const generated=output[0]?.generated_text;
+ return text.trim()?text:(Array.isArray(generated)?generated.at(-1)?.content:generated);
 }
 function bubble(cls,text){const d=document.createElement('div');d.className='msg '+cls;d.textContent=text;chat.append(d);d.scrollIntoView({block:'end',behavior:'smooth'});return d}
 input.addEventListener('focus',()=>{load().catch(()=>{})},{once:true});
@@ -38,11 +54,9 @@ form.addEventListener('submit',async e=>{
   history.push({role:'user',content:value});
   const recent=history.slice(-6).map((m,i,a)=>i===a.length-1?{role:'user',content:m.content+'\n\n(Rispondi in italiano a questa domanda.)'}:m);
   const messages=[{role:'system',content:SYSTEM},...EXAMPLES,...recent];
-  let text='';
-  const streamer=new lib.TextStreamer(generator.tokenizer,{skip_prompt:true,skip_special_tokens:true,callback_function:t=>{text+=t;out.textContent=text;out.scrollIntoView({block:'end'});}});
-  const output=await generator(messages,{max_new_tokens:160,do_sample:false,repetition_penalty:1.15,streamer});
-  const generated=output[0]?.generated_text;
-  const result=text.trim()?text:(Array.isArray(generated)?generated.at(-1)?.content:generated);
+  let result=await reply(generator,messages,out);
+  if(result===null&&mode==='gpu'){out.textContent='';status.textContent='La scheda grafica dà risultati errati: passo al processore (più lento ma affidabile)…';result=await reply(await switchToCpu(),messages,out);}
+  if(result===null)throw Error('Il modello ha prodotto testo non valido');
   if(typeof result!=='string'||!result.trim())throw Error('Risposta vuota');
   out.textContent=result.trim();
   history.push({role:'assistant',content:result.trim()});
