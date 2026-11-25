@@ -14,7 +14,7 @@ async function load(){
 }
 form.addEventListener('submit',async e=>{
  e.preventDefault();const value=input.value.trim();if(busy||!value)return;
- busy=true;button.disabled=true;input.readOnly=true;answer.textContent='Avvio dell'assistente…';
+ busy=true;button.disabled=true;input.readOnly=true;answer.textContent="Avvio dell'assistente…";
  try{
  const generator=await load();answer.textContent='Sto elaborando la risposta…';
  const output=await generator([{role:'system',content:'Sei un assistente utile. Rispondi in italiano.'},{role:'user',content:value}],{max_new_tokens:96,do_sample:false});
