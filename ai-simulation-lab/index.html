@@ -9,7 +9,7 @@ async function load(){
  const lib=await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2');
  lib.env.allowLocalModels=false;
  lib.env.backends.onnx.wasm.numThreads=1;
- model=await lib.pipeline('text-generation','onnx-community/SmolLM2-135M-Instruct-ONNX',{device:'wasm',dtype:'q4',progress_callback:p=>{if(p.status==='progress'&&Number.isFinite(p.progress))answer.textContent='Caricamento iniziale… '+Math.round(p.progress)+'%';}});
+ model=await lib.pipeline('text-generation','onnx-community/SmolLM2-135M-Instruct-ONNX-MHA',{device:'wasm',dtype:'q4',progress_callback:p=>{if(p.status==='progress'&&Number.isFinite(p.progress))answer.textContent='Caricamento iniziale… '+Math.round(p.progress)+'%';}});
  return model;
 }
 form.addEventListener('submit',async e=>{
