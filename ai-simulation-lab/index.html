@@ -9,15 +9,15 @@ async function load(){
  const lib=await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2');
  lib.env.allowLocalModels=false;
  lib.env.backends.onnx.wasm.numThreads=1;
- model=await lib.pipeline('text-generation','onnx-community/Qwen2.5-0.5B-Instruct',{device:'wasm',dtype:'q4',progress_callback:p=>{if(p.status==='progress'&&Number.isFinite(p.progress))answer.textContent='Caricamento modello… '+Math.round(p.progress)+'%';}});
+ model=await lib.pipeline('text-generation','onnx-community/SmolLM2-135M-Instruct-ONNX',{device:'wasm',dtype:'q4',progress_callback:p=>{if(p.status==='progress'&&Number.isFinite(p.progress))answer.textContent='Caricamento iniziale… '+Math.round(p.progress)+'%';}});
  return model;
 }
 form.addEventListener('submit',async e=>{
  e.preventDefault();const value=input.value.trim();if(busy||!value)return;
- busy=true;button.disabled=true;input.readOnly=true;answer.textContent='Preparazione di AlessioAI…';
+ busy=true;button.disabled=true;input.readOnly=true;answer.textContent='Avvio dell'assistente…';
  try{
  const generator=await load();answer.textContent='Sto elaborando la risposta…';
- const output=await generator([{role:'system',content:'Sei un assistente utile. Rispondi in italiano.'},{role:'user',content:value}],{max_new_tokens:128,do_sample:false});
+ const output=await generator([{role:'system',content:'Sei un assistente utile. Rispondi in italiano.'},{role:'user',content:value}],{max_new_tokens:96,do_sample:false});
  const generated=output[0]?.generated_text;
  const result=Array.isArray(generated)?generated.at(-1)?.content:generated;
  if(typeof result!=='string'||!result.trim())throw Error('Risposta vuota');
