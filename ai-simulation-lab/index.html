@@ -3,34 +3,27 @@
 *{box-sizing:border-box}body{margin:0;background:#fafafa;color:#202124;font:16px/1.6 system-ui,sans-serif}main{width:min(720px,calc(100% - 32px));margin:auto;min-height:100dvh;display:flex;flex-direction:column;justify-content:center;padding:32px 0}h1{text-align:center;font-size:clamp(38px,7vw,58px);letter-spacing:-3px;font-weight:650;margin:0 0 28px}.composer{display:flex;align-items:flex-end;gap:12px;border:1px solid #dedede;background:white;border-radius:24px;padding:16px;box-shadow:0 8px 32px #00000008}textarea{flex:1;min-width:0;min-height:58px;max-height:180px;resize:vertical;border:0;outline:none;background:transparent;color:inherit;font:inherit}button{flex:none;border:0;border-radius:50%;width:42px;height:42px;background:#222;color:white;cursor:pointer;font-size:24px}button:disabled{opacity:.45;cursor:wait}button:focus-visible,textarea:focus-visible{outline:2px solid #777;outline-offset:3px}#answer{white-space:pre-wrap;overflow-wrap:anywhere;margin:20px 8px;color:#444}#answer:empty{display:none}@media(prefers-color-scheme:dark){body{background:#171717;color:#eee}.composer{background:#252525;border-color:#444}button{background:#eee;color:#222}#answer{color:#ccc}}
 </style></head><body><main><h1>AlessioAI</h1><form id="composer" class="composer"><textarea id="prompt" aria-label="Scrivi un prompt" placeholder="Scrivi un messaggio…" maxlength="4000" required></textarea><button type="submit" aria-label="Invia messaggio">↑</button></form><div id="answer" role="status" aria-live="polite"></div></main><script>
 const form=document.getElementById('composer'),input=document.getElementById('prompt'),answer=document.getElementById('answer'),button=form.querySelector('button');
-let engine=null,busy=false,history=[];
+let model=null,busy=false;
 async function load(){
- if(engine)return engine;
- if(!navigator.gpu)throw new Error('WEBGPU');
- const adapter=await navigator.gpu.requestAdapter();
- if(!adapter)throw new Error('WEBGPU');
- const lib=await import('https://esm.run/@mlc-ai/web-llm@0.2.89');
- const models=lib.prebuiltAppConfig.model_list;
- const preferred=['Qwen2.5-0.5B-Instruct-q4f32_1-MLC','SmolLM2-360M-Instruct-q4f32_1-MLC','SmolLM2-360M-Instruct-q0f32-MLC'];
- const model=preferred.find(id=>models.some(m=>m.model_id===id));
- if(!model)throw new Error('MODEL');
- engine=await lib.CreateMLCEngine(model,{initProgressCallback:p=>{answer.textContent='Preparazione di AlessioAI… '+Math.round(Math.max(0,Math.min(1,p.progress||0))*100)+'%'}});
- return engine;
+ if(model)return model;
+ const lib=await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2');
+ lib.env.allowLocalModels=false;
+ lib.env.backends.onnx.wasm.numThreads=1;
+ model=await lib.pipeline('text-generation','onnx-community/Qwen2.5-0.5B-Instruct',{device:'wasm',dtype:'q4',progress_callback:p=>{if(p.status==='progress'&&Number.isFinite(p.progress))answer.textContent='Caricamento modello… '+Math.round(p.progress)+'%';}});
+ return model;
 }
-form.addEventListener('submit',async event=>{
- event.preventDefault();const value=input.value.trim();if(busy||!value)return;
+form.addEventListener('submit',async e=>{
+ e.preventDefault();const value=input.value.trim();if(busy||!value)return;
  busy=true;button.disabled=true;input.readOnly=true;answer.textContent='Preparazione di AlessioAI…';
  try{
- const ai=await load();
- const messages=[{role:'system',content:'Sei AlessioAI, un assistente utile. Rispondi nella lingua dell utente, in modo chiaro e conciso.'},...history.slice(-2),{role:'user',content:value}];
- answer.textContent='Sto elaborando la risposta…';
- const stream=await ai.chat.completions.create({messages,stream:true,max_tokens:256,temperature:0.5});
- let result='';
- for await(const chunk of stream){result+=chunk.choices[0]?.delta?.content||'';if(result)answer.textContent=result;}
- if(!result.trim())throw new Error('EMPTY');
- history=[{role:'user',content:value},{role:'assistant',content:result}];input.value='';
- }catch(e){console.error(e);if(engine){try{await engine.unload()}catch{}}engine=null;answer.textContent=e.message==='WEBGPU'?'Il tuo dispositivo non supporta ancora questa modalità. Prova Chrome o Edge aggiornato su un computer compatibile.':'Non sono riuscito a generare la risposta. Controlla la connessione e la memoria disponibile, poi riprova.';}
+ const generator=await load();answer.textContent='Sto elaborando la risposta…';
+ const output=await generator([{role:'system',content:'Sei un assistente utile. Rispondi in italiano.'},{role:'user',content:value}],{max_new_tokens:128,do_sample:false});
+ const generated=output[0]?.generated_text;
+ const result=Array.isArray(generated)?generated.at(-1)?.content:generated;
+ if(typeof result!=='string'||!result.trim())throw Error('Risposta vuota');
+ answer.textContent=result;input.value='';
+ }catch(error){console.error(error);answer.textContent='Impossibile completare la richiesta. '+String(error.message||error).slice(0,240)+' — Riprova.';}
  finally{busy=false;button.disabled=false;input.readOnly=false;}
 });
-input.addEventListener('keydown',event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();if(!busy)form.requestSubmit()}});
+input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();if(!busy)form.requestSubmit()}});
 </script></body></html>
