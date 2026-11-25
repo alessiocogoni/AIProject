@@ -1,29 +1,51 @@
 <!doctype html>
 <html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AlessioAI</title><style>
-*{box-sizing:border-box}body{margin:0;background:#fafafa;color:#202124;font:16px/1.6 system-ui,sans-serif}main{width:min(720px,calc(100% - 32px));margin:auto;min-height:100dvh;display:flex;flex-direction:column;justify-content:center;padding:32px 0}h1{text-align:center;font-size:clamp(38px,7vw,58px);letter-spacing:-3px;font-weight:650;margin:0 0 28px}.composer{display:flex;align-items:flex-end;gap:12px;border:1px solid #dedede;background:white;border-radius:24px;padding:16px;box-shadow:0 8px 32px #00000008}textarea{flex:1;min-width:0;min-height:58px;max-height:180px;resize:vertical;border:0;outline:none;background:transparent;color:inherit;font:inherit}button{flex:none;border:0;border-radius:50%;width:42px;height:42px;background:#222;color:white;cursor:pointer;font-size:24px}button:disabled{opacity:.45;cursor:wait}button:focus-visible,textarea:focus-visible{outline:2px solid #777;outline-offset:3px}#answer{white-space:pre-wrap;overflow-wrap:anywhere;margin:20px 8px;color:#444}#answer:empty{display:none}@media(prefers-color-scheme:dark){body{background:#171717;color:#eee}.composer{background:#252525;border-color:#444}button{background:#eee;color:#222}#answer{color:#ccc}}
-</style></head><body><main><h1>AlessioAI</h1><form id="composer" class="composer"><textarea id="prompt" aria-label="Scrivi un prompt" placeholder="Scrivi un messaggio…" maxlength="4000" required></textarea><button type="submit" aria-label="Invia messaggio">↑</button></form><div id="answer" role="status" aria-live="polite"></div></main><script>
-const form=document.getElementById('composer'),input=document.getElementById('prompt'),answer=document.getElementById('answer'),button=form.querySelector('button');
-let model=null,busy=false;
-async function load(){
- if(model)return model;
- const lib=await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2');
- lib.env.allowLocalModels=false;
- lib.env.backends.onnx.wasm.numThreads=1;
- model=await lib.pipeline('text-generation','onnx-community/SmolLM2-135M-Instruct-ONNX-MHA',{device:'wasm',dtype:'q4',progress_callback:p=>{if(p.status==='progress'&&Number.isFinite(p.progress))answer.textContent='Caricamento iniziale… '+Math.round(p.progress)+'%';}});
- return model;
+*{box-sizing:border-box}body{margin:0;background:#fafafa;color:#202124;font:16px/1.6 system-ui,sans-serif}main{width:min(720px,calc(100% - 32px));margin:auto;min-height:100dvh;display:flex;flex-direction:column;justify-content:center;padding:32px 0}h1{text-align:center;font-size:clamp(38px,7vw,58px);letter-spacing:-3px;font-weight:650;margin:0 0 28px}
+#chat{display:flex;flex-direction:column;gap:12px;margin:0 0 20px}#chat:empty{display:none}.msg{white-space:pre-wrap;overflow-wrap:anywhere;padding:10px 16px;border-radius:18px;max-width:85%}.user{align-self:flex-end;background:#e9e9e9}.bot{align-self:flex-start;background:white;border:1px solid #e3e3e3}.bot:empty::after{content:'…';color:#999}
+.composer{display:flex;align-items:flex-end;gap:12px;border:1px solid #dedede;background:white;border-radius:24px;padding:16px;box-shadow:0 8px 32px #00000008}textarea{flex:1;min-width:0;min-height:58px;max-height:180px;resize:vertical;border:0;outline:none;background:transparent;color:inherit;font:inherit}button{flex:none;border:0;border-radius:50%;width:42px;height:42px;background:#222;color:white;cursor:pointer;font-size:24px}button:disabled{opacity:.45;cursor:wait}button:focus-visible,textarea:focus-visible{outline:2px solid #777;outline-offset:3px}
+#status{margin:12px 8px 0;color:#777;font-size:14px;text-align:center}#status:empty{display:none}
+@media(prefers-color-scheme:dark){body{background:#171717;color:#eee}.composer,.bot{background:#252525;border-color:#444}.user{background:#333}button{background:#eee;color:#222}#status{color:#999}}
+</style></head><body><main><h1>AlessioAI</h1><div id="chat" aria-live="polite"></div><form id="composer" class="composer"><textarea id="prompt" aria-label="Scrivi un messaggio" placeholder="Scrivi un messaggio…" maxlength="4000" required></textarea><button type="submit" aria-label="Invia messaggio">↑</button></form><div id="status" role="status"></div></main><script>
+const form=document.getElementById('composer'),input=document.getElementById('prompt'),chat=document.getElementById('chat'),status=document.getElementById('status'),button=form.querySelector('button');
+const SYSTEM="Sei AlessioAI, un amico simpatico che chiacchiera in italiano. Rispondi in modo naturale e diretto a quello che ti viene detto o chiesto, come in una normale conversazione tra persone. Usa frasi brevi (2-3 frasi). Non spiegare il significato delle parole e non fare definizioni da dizionario, a meno che te lo chiedano esplicitamente. Se ti salutano, saluta e chiedi come va.";
+const history=[];
+let loading=null,lib=null,busy=false;
+async function hasWebGPU(){try{return !!(navigator.gpu&&await navigator.gpu.requestAdapter())}catch{return false}}
+function load(){
+ if(loading)return loading;
+ loading=(async()=>{
+  lib=await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.2');
+  lib.env.allowLocalModels=false;
+  const gpu=await hasWebGPU();
+  if(!gpu)lib.env.backends.onnx.wasm.numThreads=1;
+  status.textContent='Preparazione del modello…';
+  const gen=await lib.pipeline('text-generation','onnx-community/Qwen2.5-0.5B-Instruct',{device:gpu?'webgpu':'wasm',dtype:gpu?'q4f16':'q8',progress_callback:p=>{if(p.status==='progress'&&String(p.file).endsWith('.onnx')&&Number.isFinite(p.progress))status.textContent='Download del modello (solo la prima volta)… '+Math.round(p.progress)+'%';}});
+  status.textContent='';
+  return gen;
+ })();
+ loading.catch(()=>{loading=null});
+ return loading;
 }
+function bubble(cls,text){const d=document.createElement('div');d.className='msg '+cls;d.textContent=text;chat.append(d);d.scrollIntoView({block:'end',behavior:'smooth'});return d}
+input.addEventListener('focus',()=>{load().catch(()=>{})},{once:true});
 form.addEventListener('submit',async e=>{
  e.preventDefault();const value=input.value.trim();if(busy||!value)return;
- busy=true;button.disabled=true;input.readOnly=true;answer.textContent="Avvio dell'assistente…";
+ busy=true;button.disabled=true;input.value='';
+ bubble('user',value);const out=bubble('bot','');
  try{
- const generator=await load();answer.textContent='Sto elaborando la risposta…';
- const output=await generator([{role:'system',content:'Sei un assistente utile. Rispondi in italiano.'},{role:'user',content:value}],{max_new_tokens:96,do_sample:false});
- const generated=output[0]?.generated_text;
- const result=Array.isArray(generated)?generated.at(-1)?.content:generated;
- if(typeof result!=='string'||!result.trim())throw Error('Risposta vuota');
- answer.textContent=result;input.value='';
- }catch(error){console.error(error);answer.textContent='Impossibile completare la richiesta. '+String(error.message||error).slice(0,240)+' — Riprova.';}
- finally{busy=false;button.disabled=false;input.readOnly=false;}
+  const generator=await load();
+  history.push({role:'user',content:value});
+  const messages=[{role:'system',content:SYSTEM},...history.slice(-8)];
+  let text='';
+  const streamer=new lib.TextStreamer(generator.tokenizer,{skip_prompt:true,skip_special_tokens:true,callback_function:t=>{text+=t;out.textContent=text;out.scrollIntoView({block:'end'});}});
+  const output=await generator(messages,{max_new_tokens:160,do_sample:true,temperature:0.7,top_p:0.9,repetition_penalty:1.1,streamer});
+  const generated=output[0]?.generated_text;
+  const result=(Array.isArray(generated)?generated.at(-1)?.content:text)||text;
+  if(typeof result!=='string'||!result.trim())throw Error('Risposta vuota');
+  out.textContent=result.trim();
+  history.push({role:'assistant',content:result.trim()});
+ }catch(error){console.error(error);if(history.at(-1)?.role==='user')history.pop();status.textContent='';out.textContent='Impossibile completare la richiesta. '+String(error.message||error).slice(0,240)+' — Riprova.';}
+ finally{busy=false;button.disabled=false;input.focus();}
 });
 input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.isComposing){e.preventDefault();if(!busy)form.requestSubmit()}});
 </script></body></html>
